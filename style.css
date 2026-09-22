@@ -1,0 +1,43 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    text-align: center;
+}
+
+h1 {
+    margin-top: 20px;
+}
+
+#map {
+    width: 90%;
+    height: 500px;
+    margin: 20px auto;
+    border-radius: 10px;
+}
+
+.popup-content {
+    max-width: 220px;
+    text-align: left;
+}
+
+.popup-content h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.popup-content p {
+    margin: 0;
+    line-height: 1.4;
+}
+
+@media (max-width: 600px) {
+    #map {
+        width: 95%;
+        height: 400px;
+    }
+
+    .popup-content {
+        max-width: 170px;
+        font-size: 14px;
+    }
+}
