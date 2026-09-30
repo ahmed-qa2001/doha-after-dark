@@ -6,8 +6,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-//custome marker 
-
+// Custom marker
 const customIcon = L.icon({
     iconUrl: 'https://cdn-icons-png.flaticon.com/512/684/684908.png',
     iconSize: [35, 35],
@@ -15,32 +14,36 @@ const customIcon = L.icon({
     popupAnchor: [0, -35]
 });
 
-// Souq Waqif
-L.marker([25.2867, 51.5333], { icon: customIcon })
-    .addTo(map)
-    .bindPopup(`
-        <div class="popup-content">
-            <h3>Souq Waqif</h3>
-            <p>Traditional market with restaurants, shops, and evening activities.</p>
-        </div>
-    `);
+// Build popup elements as text so database content cannot inject HTML.
+function popupFor(location) {
+    const content = document.createElement('div');
+    content.className = 'popup-content';
+    const title = document.createElement('h3');
+    title.textContent = location.name;
+    const description = document.createElement('p');
+    description.textContent = location.description;
+    content.append(title, description);
+    return content;
+}
 
-// Doha Corniche
-L.marker([25.3020, 51.5195], { icon: customIcon })
-    .addTo(map)
-    .bindPopup(`
-        <div class="popup-content">
-            <h3>Doha Corniche</h3>
-            <p>A waterfront promenade with beautiful views of Doha at night.</p>
-        </div>
-    `);
+async function loadLocations() {
+    try {
+        const response = await fetch('/api/locations');
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
+        const locations = await response.json();
 
-// Katara Cultural Village
-L.marker([25.3608, 51.5253], { icon: customIcon })
-    .addTo(map)
-    .bindPopup(`
-        <div class="popup-content">
-            <h3>Katara Cultural Village</h3>
-            <p>A cultural destination with restaurants, events, art, and entertainment.</p>
-        </div>
-    `);
+        locations.forEach(location => {
+            L.marker([location.latitude, location.longitude], { icon: customIcon })
+                .addTo(map)
+                .bindPopup(popupFor(location));
+        });
+    } catch (error) {
+        console.error('Could not load map locations:', error);
+        const message = document.createElement('p');
+        message.setAttribute('role', 'alert');
+        message.textContent = 'Locations could not load. Please refresh the page.';
+        document.querySelector('#map').after(message);
+    }
+}
+
+loadLocations();
