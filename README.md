@@ -20,7 +20,7 @@ Doha After Dark is a UDST Practicum project about exploring Doha at night. It wi
 
 Our IT work includes front-end and back-end development, database design, REST APIs, system integration, testing, and deployment.
 
-
+###################
 
 ##### Current Phase: Map and Basic CMS Prototype
 
