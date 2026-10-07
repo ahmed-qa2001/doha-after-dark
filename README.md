@@ -23,7 +23,7 @@ Our IT work includes front-end and back-end development, database design, REST A
 
 
 
-##### Current Phase: Map and Basic CMS Prototype
+### Current Phase: Map and Basic CMS Prototype
 
 The Leaflet map loads location names, descriptions, and coordinates from a SQLite database through the Python API.
 
