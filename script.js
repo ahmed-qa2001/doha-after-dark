@@ -2,9 +2,13 @@
 const map = L.map('map').setView([25.2854, 51.5310], 12);
 
 // Add OpenStreetMap
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
+L.tileLayer(
+    'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=cb1_4dl2_1_5eeee814f8b39698d1cd6f4b',
+    {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        maxZoom: 20
+    }
+).addTo(map);
 
 // Custom marker
 const customIcon = L.icon({

@@ -41,3 +41,10 @@ h1 {
         font-size: 14px;
     }
 }
+.admin { max-width: 700px; margin: 24px auto; padding: 0 20px; text-align: left; }
+.admin label { display: block; margin: 14px 0 6px; font-weight: bold; }
+.admin input, .admin textarea { width: 100%; box-sizing: border-box; padding: 10px; font: inherit; border: 1px solid #888; border-radius: 5px; }
+.admin button { padding: 10px 16px; cursor: pointer; font: inherit; }
+.actions { margin-top: 16px; display: flex; gap: 10px; }
+.admin article { border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-bottom: 12px; overflow-wrap: anywhere; }
+#status { min-height: 24px; }
