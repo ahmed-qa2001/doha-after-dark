@@ -1,5 +1,8 @@
 """Doha After Dark: local CMS, multimedia, and original 0-8 crowd score API.
 
+The server connects the map, the CMS, and the crowd rule engine to SQLite.
+Start with Handler below to see what happens when a request arrives.
+
 Python 3.9+, standard library only. Binds to localhost for development;
 write endpoints are NOT authenticated, and must not be publicly exposed.
 """
@@ -24,14 +27,23 @@ SEED_LOCATIONS = [
      "A cultural destination with restaurants, events, art, and entertainment."),
 ]
 MAX_BODY_BYTES = 65_536
+MEDIA_TYPES = {
+    ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".png": "image/png", ".webp": "image/webp", ".mp4": "video/mp4",
+    ".webm": "video/webm", ".wav": "audio/wav", ".mp3": "audio/mpeg",
+}
 
+
+# 1. Set up SQLite and upgrade older copies of locations.db.
 
 @contextmanager
 def connect():
+    # Rows can be read by column name, such as row["location_id"].
     connection = sqlite3.connect(DATABASE, timeout=10)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     try:
+        # Save changes on success, or undo the transaction if an error occurs.
         with connection:
             yield connection
     finally:
@@ -41,6 +53,8 @@ def connect():
 def initialize_database():
     """Create new tables without deleting or rewriting previously saved locations."""
     with connect() as db:
+        # Run the setup as one transaction so a failed upgrade can roll back.
+        db.execute("BEGIN IMMEDIATE")
         db.execute("""
             CREATE TABLE IF NOT EXISTS locations (
                 id INTEGER PRIMARY KEY,
@@ -50,7 +64,7 @@ def initialize_database():
                 description TEXT NOT NULL
             )
         """)
-        # Week 10: one location may contain multiple stories.
+        # One location may contain multiple stories.
         db.execute("""
             CREATE TABLE IF NOT EXISTS stories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,9 +73,17 @@ def initialize_database():
                 video_url TEXT,
                 thumbnail_path TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                audio_url TEXT,
+                author_credit TEXT,
+                rich_description TEXT,
                 FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
             )
         """)
+        # Add Week 11 fields to existing databases without replacing saved stories.
+        story_columns = {row["name"] for row in db.execute("PRAGMA table_info(stories)")}
+        for column in ("audio_url", "author_credit", "rich_description"):
+            if column not in story_columns:
+                db.execute(f"ALTER TABLE stories ADD COLUMN {column} TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_stories_location ON stories(location_id)")
         # Change from the earlier 1-5 test API to Mohamed's 0-8 rule-engine score.
         # The old 1-5 data MUST NOT be silently relabeled as scores out of 8.
@@ -96,12 +118,15 @@ def initialize_database():
         """)
         db.execute("CREATE INDEX IF NOT EXISTS idx_crowd_predictions_score08_location "
                    "ON crowd_predictions(location_id)")
+        # Add the three pilot venues only when the locations table is empty.
         if db.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 0:
             db.executemany(
                 "INSERT INTO locations (name, latitude, longitude, description) VALUES (?, ?, ?, ?)",
                 SEED_LOCATIONS,
             )
 
+
+# 2. Check incoming data before writing it to SQLite.
 
 def required_text(data, key, limit):
     value = data.get(key)
@@ -126,6 +151,7 @@ def positive_id(value, key="location_id"):
 
 
 def coordinates(data):
+    # Use the same number check for latitude and longitude, with different limits.
     def one(key, lower, upper):
         value = data.get(key)
         if isinstance(value, bool):
@@ -140,39 +166,48 @@ def coordinates(data):
     return one("latitude", -90, 90), one("longitude", -180, 180)
 
 
+def media_filename(path):
+    # Serve only flat, named media files from the project's media folder.
+    if re.fullmatch(r"/media/[A-Za-z0-9_-]+\.[A-Za-z0-9]+", path):
+        return Path(path).name
+    return None
+
+
+def valid_media_url(value, key, local_suffixes):
+    if value is None:
+        return
+    parts = urlsplit(value)
+    if (parts.scheme in ("http", "https") and parts.hostname
+            and parts.username is None and parts.password is None):
+        return
+    if value.startswith("media/") and media_filename("/" + value):
+        if Path(value).suffix.lower() in local_suffixes:
+            return
+    raise ValueError(f"{key} must be an http(s) URL or a supported media/ path")
+
+
 def validate_story(data):
-    from urllib.parse import urlsplit
+    # The story belongs to a location. Its media fields are optional.
     location_id = positive_id(data.get("location_id"))
     summary = required_text(data, "summary", 2000)
     video_url = optional_text(data, "video_url")
     thumbnail_path = optional_text(data, "thumbnail_path")
-    if video_url:
-        parts = urlsplit(video_url)
-        if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
-            raise ValueError("video_url must be an http(s) URL")
+    audio_url = optional_text(data, "audio_url")
+    author_credit = optional_text(data, "author_credit", 200)
+    rich_description = optional_text(data, "rich_description", 6000)
+    valid_media_url(video_url, "video_url", (".mp4", ".webm"))
+    valid_media_url(audio_url, "audio_url", (".wav", ".mp3"))
     if thumbnail_path:
-        # Store metadata only; file uploads and static media serving are future work.
         parts = urlsplit(thumbnail_path)
         if parts.scheme:
-            if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
-                raise ValueError("thumbnail_path must be a relative path or http(s) URL")
+            valid_media_url(thumbnail_path, "thumbnail_path", ())
         elif thumbnail_path.startswith("/") or ".." in Path(thumbnail_path).parts or "\\" in thumbnail_path:
             raise ValueError("thumbnail_path must not contain directory traversal")
-    return (location_id, summary, video_url, thumbnail_path)
-
-
-def location_exists(db, location_id):
-    return db.execute("SELECT 1 FROM locations WHERE id = ?", (location_id,)).fetchone() is not None
-
-
-def stories_for(db, location_id=None):
-    sql = "SELECT id, location_id, summary, video_url, thumbnail_path, created_at FROM stories"
-    params = []
-    if location_id is not None:
-        sql += " WHERE location_id = ?"
-        params.append(location_id)
-    sql += " ORDER BY id"
-    return [dict(row) for row in db.execute(sql, params)]
+    return {
+        "location_id": location_id, "summary": summary, "video_url": video_url,
+        "thumbnail_path": thumbnail_path, "audio_url": audio_url,
+        "author_credit": author_credit, "rich_description": rich_description,
+    }
 
 
 def score_label(score):
@@ -207,6 +242,7 @@ def validate_prediction(data):
         raise ValueError("source must be 'test' or 'algorithm'")
     breakdown = data.get("score_breakdown")
     if breakdown is not None:
+        # If the engine sends the four individual scores, check they add up.
         expected_keys = {"time", "day", "event", "historical_baseline"}
         if not isinstance(breakdown, dict) or set(breakdown) != expected_keys:
             raise ValueError("score_breakdown must contain time, day, event, historical_baseline")
@@ -220,21 +256,42 @@ def validate_prediction(data):
     )
 
 
+# 3. Read saved data and prepare it for JSON responses.
+
+def location_exists(db, location_id):
+    return db.execute("SELECT 1 FROM locations WHERE id = ?", (location_id,)).fetchone() is not None
+
+
+def stories_for(db, location_id=None):
+    sql = "SELECT * FROM stories"
+    params = []
+    if location_id is not None:
+        sql += " WHERE location_id = ?"
+        params.append(location_id)
+    sql += " ORDER BY id"
+    return [dict(row) for row in db.execute(sql, params)]
+
+
+# Both the history endpoint and the save response use the location's current name.
+PREDICTION_SELECT = """
+    SELECT cp.id, cp.location_id, l.name AS location_name,
+           cp.total_score, cp.prediction, cp.confidence, cp.source,
+           cp.score_breakdown_json, cp.created_at
+    FROM crowd_predictions AS cp
+    JOIN locations AS l ON l.id = cp.location_id
+"""
+
+
 def prediction_row(row):
     result = dict(row)
+    # SQLite stores the breakdown as text. Convert it back into a JSON object.
     breakdown = result.pop("score_breakdown_json")
     result["score_breakdown"] = json.loads(breakdown) if breakdown else None
     return result
 
 
 def predictions_for(db, location_id=None):
-    # Read the name from locations rather than hardcoding ID/name mappings.
-    # If the CMS edits a location name, predictions show the updated name.
-    sql = ("SELECT cp.id, cp.location_id, l.name AS location_name, "
-           "cp.total_score, cp.prediction, cp.confidence, cp.source, "
-           "cp.score_breakdown_json, cp.created_at "
-           "FROM crowd_predictions AS cp "
-           "JOIN locations AS l ON l.id = cp.location_id")
+    sql = PREDICTION_SELECT
     params = []
     if location_id is not None:
         sql += " WHERE cp.location_id = ?"
@@ -243,7 +300,22 @@ def predictions_for(db, location_id=None):
     return [prediction_row(row) for row in db.execute(sql, params)]
 
 
+def latest_crowd_by_location(db):
+    # A location can have many predictions. Its newest saved row has the highest ID.
+    rows = db.execute("""
+        SELECT cp.location_id, cp.total_score, cp.prediction, cp.source, cp.created_at
+        FROM locations AS l
+        JOIN crowd_predictions AS cp ON cp.id = (
+            SELECT MAX(id) FROM crowd_predictions WHERE location_id = l.id
+        )
+    """)
+    return {row["location_id"]: dict(row) for row in rows}
+
+
+# 4. Answer requests from the map, the CMS, and the crowd rule engine.
+
 class Handler(BaseHTTPRequestHandler):
+    # A response includes a status code, headers, and the JSON body.
     def send_json(self, status, value):
         payload = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
@@ -254,6 +326,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def read_json(self):
+        # Check the format and size before reading a request body.
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
             raise ValueError("Content-Type must be application/json")
         try:
@@ -276,34 +349,40 @@ class Handler(BaseHTTPRequestHandler):
         return not origin or origin == "http://" + self.headers.get("Host", "")
 
     def do_GET(self):
-        path = urlsplit(self.path).path
-        query = parse_qs(urlsplit(self.path).query)
+        # GET reads data or serves a file. Split the URL into its path and filters.
+        url = urlsplit(self.path)
+        path = url.path
+        query = parse_qs(url.query)
         if path == "/api/locations":
             with connect() as db:
+                # Read locations, stories, and predictions from the same database snapshot.
+                db.execute("BEGIN")
                 locations = [dict(row) for row in db.execute(
                     "SELECT id, name, latitude, longitude, description FROM locations ORDER BY id"
                 )]
                 all_stories = stories_for(db)
+                latest_crowd = latest_crowd_by_location(db)
+            # Group stories by venue so each map marker gets its own stories.
             grouped = {}
             for story in all_stories:
                 grouped.setdefault(story["location_id"], []).append(story)
             for location in locations:
-                location["stories"] = grouped.get(location["id"], [])
+                location_id = location["id"]
+                location["stories"] = grouped.get(location_id, [])
+                location["crowd_status"] = latest_crowd.get(location_id)
             return self.send_json(200, locations)
-        if path == "/api/stories":
+        # Both list endpoints accept the same optional ?location_id= filter.
+        if path in ("/api/stories", "/api/crowd-predictions"):
             try:
                 location_id = self.filter_id(query)
             except ValueError as exc:
                 return self.send_json(400, {"error": str(exc)})
             with connect() as db:
-                return self.send_json(200, stories_for(db, location_id))
-        if path == "/api/crowd-predictions":
-            try:
-                location_id = self.filter_id(query)
-            except ValueError as exc:
-                return self.send_json(400, {"error": str(exc)})
-            with connect() as db:
+                if path == "/api/stories":
+                    return self.send_json(200, stories_for(db, location_id))
                 return self.send_json(200, predictions_for(db, location_id))
+
+        # The browser can request the listed site files and supported demo media.
         static = {
             "/": ("index.html", "text/html"),
             "/index.html": ("index.html", "text/html"),
@@ -313,31 +392,38 @@ class Handler(BaseHTTPRequestHandler):
             "/style.css": ("style.css", "text/css"),
             "/admin.js": ("admin.js", "text/javascript"),
         }
-        if path not in static:
-            return self.send_json(404, {"error": "Not found"})
-        filename, mime = static[path]
-        file_path = PROJECT_DIR / filename
+        if path in static:
+            filename, mime = static[path]
+            file_path = PROJECT_DIR / filename
+            mime += "; charset=utf-8"
+        else:
+            filename = media_filename(path)
+            mime = MEDIA_TYPES.get(Path(filename).suffix.lower()) if filename else None
+            if not mime:
+                return self.send_json(404, {"error": "Not found"})
+            file_path = PROJECT_DIR / "media" / filename
+            if file_path.resolve().parent != PROJECT_DIR / "media":
+                return self.send_json(404, {"error": "Not found"})
         if not file_path.is_file():
             return self.send_json(404, {"error": f"Missing project file: {filename}"})
         payload = file_path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", mime + "; charset=utf-8")
+        self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
 
     @staticmethod
-    def filter_id(query, required=False):
+    def filter_id(query):
         values = query.get("location_id", [])
         if not values:
-            if required:
-                raise ValueError("location_id query parameter is required")
             return None
         if len(values) != 1 or not re.fullmatch(r"[1-9][0-9]*", values[0]):
             raise ValueError("location_id must be a positive integer")
         return int(values[0])
 
     def do_POST(self):
+        # POST creates a new location, story, or crowd prediction.
         path = urlsplit(self.path).path
         if path not in ("/api/locations", "/api/stories", "/api/crowd-predictions"):
             return self.send_json(404, {"error": "Not found"})
@@ -358,14 +444,16 @@ class Handler(BaseHTTPRequestHandler):
                               "longitude": longitude, "description": description, "stories": []}
                 return self.send_json(201, result)
             if path == "/api/stories":
-                location_id, summary, video_url, thumbnail_path = validate_story(data)
+                story = validate_story(data)
                 with connect() as db:
-                    if not location_exists(db, location_id):
+                    if not location_exists(db, story["location_id"]):
                         return self.send_json(404, {"error": "Location not found"})
                     cur = db.execute(
-                        "INSERT INTO stories (location_id, summary, video_url, thumbnail_path) "
-                        "VALUES (?, ?, ?, ?)",
-                        (location_id, summary, video_url, thumbnail_path),
+                        "INSERT INTO stories (location_id, summary, video_url, thumbnail_path, "
+                        "audio_url, author_credit, rich_description) VALUES "
+                        "(:location_id, :summary, :video_url, :thumbnail_path, "
+                        ":audio_url, :author_credit, :rich_description)",
+                        story,
                     )
                     result = dict(db.execute(
                         "SELECT * FROM stories WHERE id = ?", (cur.lastrowid,)
@@ -383,12 +471,7 @@ class Handler(BaseHTTPRequestHandler):
                         (location_id, total_score, prediction, confidence, source, breakdown_json),
                     )
                     row = db.execute(
-                        "SELECT cp.id, cp.location_id, l.name AS location_name, "
-                        "cp.total_score, cp.prediction, cp.confidence, cp.source, "
-                        "cp.score_breakdown_json, cp.created_at "
-                        "FROM crowd_predictions AS cp "
-                        "JOIN locations AS l ON l.id = cp.location_id "
-                        "WHERE cp.id = ?",
+                        PREDICTION_SELECT + " WHERE cp.id = ?",
                         (cursor.lastrowid,),
                     ).fetchone()
                     result = prediction_row(row)
@@ -397,6 +480,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": str(exc)})
 
     def do_PUT(self):
+        # PUT edits an existing record. The last part of the URL is its ID.
         path = urlsplit(self.path).path
         location_match = re.fullmatch(r"/api/locations/([1-9][0-9]*)", path)
         story_match = re.fullmatch(r"/api/stories/([1-9][0-9]*)", path)
@@ -408,16 +492,26 @@ class Handler(BaseHTTPRequestHandler):
             data = self.read_json()
             if story_match:
                 story_id = int(story_match.group(1))
-                values = validate_story(data)
+                story = validate_story(data)
+                story["id"] = story_id
                 with connect() as db:
-                    if not location_exists(db, values[0]):
-                        return self.send_json(404, {"error": "Location not found"})
-                    cursor = db.execute(
-                        "UPDATE stories SET location_id=?, summary=?, video_url=?, thumbnail_path=? WHERE id=?",
-                        (*values, story_id),
-                    )
-                    if cursor.rowcount == 0:
+                    # Read and update together so another request cannot edit between them.
+                    db.execute("BEGIN IMMEDIATE")
+                    previous = db.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
+                    if previous is None:
                         return self.send_json(404, {"error": "Story not found"})
+                    if not location_exists(db, story["location_id"]):
+                        return self.send_json(404, {"error": "Location not found"})
+                    # Older callers can omit Week 11 fields when editing a story.
+                    for field in ("audio_url", "author_credit", "rich_description"):
+                        if field not in data:
+                            story[field] = previous[field]
+                    db.execute(
+                        "UPDATE stories SET location_id=:location_id, summary=:summary, "
+                        "video_url=:video_url, thumbnail_path=:thumbnail_path, audio_url=:audio_url, "
+                        "author_credit=:author_credit, rich_description=:rich_description WHERE id=:id",
+                        story,
+                    )
                     result = dict(db.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone())
                 return self.send_json(200, result)
             location_id = int(location_match.group(1))
@@ -438,11 +532,16 @@ class Handler(BaseHTTPRequestHandler):
                              "description": description})
 
 
+# 5. Start the local server after the database is ready.
+
 def main():
     initialize_database()
     server = ThreadingHTTPServer(("127.0.0.1", 8000), Handler)
     print("Map: http://localhost:8000/\nCMS: http://localhost:8000/admin")
-    print("API: /api/locations, /api/stories, /api/crowd-predictions")
+    print("API: http://localhost:8000/api/locations, http://localhost:8000/api/stories, http://localhost:8000/api/crowd-predictions")
+    print("Video:     http://localhost:8000/media/souq-demo.mp4")
+    print("Thumbnail: http://localhost:8000/media/souq-demo.svg")
+    print("Audio:     http://localhost:8000/media/souq-demo.wav")
     print("Press Ctrl+C to stop")
     try:
         server.serve_forever()
