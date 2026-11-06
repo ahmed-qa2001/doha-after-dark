@@ -27,6 +27,17 @@ function popupFor(location) {
     const description = document.createElement('p');
     description.textContent = location.description;
     content.append(title, description);
+
+    // Each marker shows the latest prediction saved for its location.
+    const crowd = document.createElement('p');
+    const status = location.crowd_status;
+    if (status) {
+        const label = status.source === 'test' ? 'Test prediction' : 'Crowd prediction';
+        crowd.textContent = `${label}: ${status.prediction} (${status.total_score}/8)`;
+    } else {
+        crowd.textContent = 'No crowd prediction yet.';
+    }
+    content.append(crowd);
     return content;
 }
 

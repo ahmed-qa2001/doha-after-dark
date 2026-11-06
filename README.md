@@ -158,3 +158,33 @@ Confidence is rule-based and does not represent measured prediction accuracy.
 - admin.html / admin.js – Location CMS.
 - index.html / script.js – Interactive Leaflet map.
 
+
+---
+
+## Week 11 – Dynamic Media and Map API
+
+Run `python server.py` from this folder. The existing database is upgraded on
+startup. A fresh database still seeds the three pilot venues.
+
+1. Open `http://localhost:8000/api/stories?location_id=1`. The Souq Waqif demo
+   database row contains the thumbnail, sample video and audio, author credit,
+   and a Markdown description. Local media paths are relative to the site root.
+   The samples are a project title card and a test tone.
+2. Open `http://localhost:8000/api/locations`. Each venue has coordinates,
+   a `stories` array with story IDs, and `crowd_status` with the latest saved
+   score, label, source, and timestamp. A venue with no prediction has
+   `"crowd_status": null`.
+3. Run the rule engine command in the Week 10 section, then refresh the API
+   or the map at `http://localhost:8000/`. Click the Souq Waqif marker to see
+   its latest test prediction. The map fetches on page load. The score comes
+   from example inputs and is not a live crowd count.
+
+The existing story POST and PUT endpoints accept `audio_url`, `author_credit`,
+and `rich_description` alongside the Week 10 fields. The description is served
+as Markdown text in JSON. An older PUT that omits the three new fields keeps
+their saved values. Send JSON null explicitly to clear any of them.
+
+The included database is a demo copy of the Week 10 database with updated
+Souq Waqif story metadata. To try the sample story in a fresh database, use
+the data in `evidence/sample-stories.json` to POST a story for location 1,
+omitting the returned `id` and `created_at` fields.
