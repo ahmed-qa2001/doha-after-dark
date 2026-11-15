@@ -184,7 +184,3 @@ and `rich_description` alongside the Week 10 fields. The description is served
 as Markdown text in JSON. An older PUT that omits the three new fields keeps
 their saved values. Send JSON null explicitly to clear any of them.
 
-The included database is a demo copy of the Week 10 database with updated
-Souq Waqif story metadata. To try the sample story in a fresh database, use
-the data in `evidence/sample-stories.json` to POST a story for location 1,
-omitting the returned `id` and `created_at` fields.

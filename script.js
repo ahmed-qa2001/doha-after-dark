@@ -37,7 +37,53 @@ function popupFor(location) {
     } else {
         crowd.textContent = 'No crowd prediction yet.';
     }
+    
+
+    // Show multimedia for this location, if available.
+    const story = location.stories?.[0];
+
+    if (story) {
+        // Display the story summary.
+        const summary = document.createElement('p');
+        summary.textContent = story.summary;
+        content.append(summary);
+
+        // Display the thumbnail image.
+        if (story.thumbnail_path) {
+            const image = document.createElement('img');
+            image.src = story.thumbnail_path;
+            image.alt = location.name;
+            image.style.width = '220px';
+            image.style.maxWidth = '100%';
+            content.append(image);
+        }
+
+        // Display a link to the video.
+        if (story.video_url) {
+            const video = document.createElement('p');
+            const link = document.createElement('a');
+            link.href = story.video_url;
+            link.textContent = 'Watch Video';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            video.append(link);
+            content.append(video);
+        }
+
+        // Display a link to the audio.
+        if (story.audio_url) {
+            const audio = document.createElement('p');
+            const link = document.createElement('a');
+            link.href = story.audio_url;
+            link.textContent = 'Listen to Audio';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            audio.append(link);
+            content.append(audio);
+        }   
+    }
     content.append(crowd);
+    
     return content;
 }
 
