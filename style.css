@@ -9,9 +9,9 @@ h1 {
 }
 
 #map {
-    width: 90%;
-    height: 500px;
-    margin: 20px auto;
+    width: 100%;
+    height: calc(100vh - 200px);
+    min-height: 450px;
     border-radius: 10px;
 }
 
