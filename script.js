@@ -24,9 +24,62 @@ function popupFor(location) {
     content.className = 'popup-content';
     const title = document.createElement('h3');
     title.textContent = location.name;
+
+    // Show one description: prefer the story summary when available.
+    const story = location.stories?.[0];
     const description = document.createElement('p');
-    description.textContent = location.description;
+    description.textContent = story?.summary?.trim() || location.description;
     content.append(title, description);
+
+    // Each marker shows the latest prediction saved for its location.
+    const crowd = document.createElement('p');
+    const status = location.crowd_status;
+    if (status) {
+        const label = status.source === 'test' ? 'Test prediction' : 'Crowd prediction';
+        crowd.textContent = `${label}: ${status.prediction} (${status.total_score}/8)`;
+    } else {
+        crowd.textContent = 'No crowd prediction yet.';
+    }
+    
+
+    // Show multimedia for this location, if available.
+    if (story) {
+        // Display the thumbnail image.
+        if (story.thumbnail_path) {
+            const image = document.createElement('img');
+            image.src = story.thumbnail_path;
+            image.alt = location.name;
+            image.style.width = '220px';
+            image.style.maxWidth = '100%';
+            content.append(image);
+        }
+
+        // Display a link to the video.
+        if (story.video_url) {
+            const video = document.createElement('p');
+            const link = document.createElement('a');
+            link.href = story.video_url;
+            link.textContent = 'Watch Video';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            video.append(link);
+            content.append(video);
+        }
+
+        // Display a link to the audio.
+        if (story.audio_url) {
+            const audio = document.createElement('p');
+            const link = document.createElement('a');
+            link.href = story.audio_url;
+            link.textContent = 'Listen to Audio';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            audio.append(link);
+            content.append(audio);
+        }   
+    }
+    content.append(crowd);
+    
     return content;
 }
 
